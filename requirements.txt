@@ -1,0 +1,6 @@
+ogb
+numpy
+scipy
+dgl
+ipykernel
+jupyterlab
