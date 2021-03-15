@@ -3,11 +3,10 @@ Implementation of Relational GCNs as part of the "New Developments in Deep Learn
 
 ## Getting started
 ### Create and activate a conda environment
-    conda create -n NDinDL python=3.8
-    conda activate NDinDL
+This also installs the project requirements (platform: win-64):
 
-### Install package requirements
-    pip install -r requirements.txt
+    conda create --name NDinDL --file requirements.txt python=3.8
+    conda activate NDinDL
 
 ### Install the IPython kernel
 In order to use the environment within jupyter notebook you have to install the IPython kernel.
