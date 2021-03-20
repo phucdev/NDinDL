@@ -14,6 +14,18 @@ from RGCNConv import RGCNConv
 class RGCN(torch.nn.Module):
     def __init__(self, num_nodes, h_dim, out_dim, num_rels,
                  num_bases=-1, num_hidden_layers=1):
+        """
+        Implementation of R-GCN from the `"Modeling
+        Relational Data with Graph Convolutional Networks"
+        <https://arxiv.org/abs/1703.06103>`_ paper
+
+        :param num_nodes: Number of nodes (input dimension)
+        :param h_dim: Hidden dimension
+        :param out_dim: Output dimension
+        :param num_rels: Number of relation types
+        :param num_bases: Number of basis functions
+        :param num_hidden_layers: Number of hidden layers
+        """
         super(RGCN, self).__init__()
         self.num_nodes = num_nodes
         self.h_dim = h_dim
