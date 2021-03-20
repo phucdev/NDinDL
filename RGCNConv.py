@@ -1,100 +1,100 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from scipy import sparse
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-# https://github.com/masakicktashiro/rgcn_pytorch_implementation/blob/master/layers.py
 class RGCNConv(nn.Module):
     def __init__(self,
                  input_dim,
                  output_dim,
-                 support=1,
-                 featureless=True,
-                 weights=None, num_bases=-1,
-                 bias=False, dropout=0.):
+                 num_rels,
+                 num_bases=-1,
+                 bias=None,
+                 activation=None,
+                 is_input_layer=False):
+        r"""The relational graph convolutional operator from the `"Modeling
+        Relational Data with Graph Convolutional Networks"
+        <https://arxiv.org/abs/1703.06103>`_ paper
+
+        Propagation model:
+        (1) $h_i^{l+1} = \sigma\left(\sum_{r\in R}\sum_{j\in N^r_i}\frac{1}{c_{i,r}}W_r^{(l)}h_j^{(l)}+
+        \underbrace{W_0^{(l)}h_i^{(l)}}_{\text{self-connection}}\right)$
+
+        where
+        - $N^r_i$ denotes the set of neighbor indices of node $i$ under relation $r \in R$,
+        - $c_{i,r}$ is a problem-specific normalization constant that can either be learned or chosen in advance
+          (such as $c_{i,r} = |N_i^r|$).
+
+        Neural network layer update: evaluate message passing update in parallel for every node $i \in V$.
+
+        Parameter sharing for highly- multi-relational data: basis decomposition of relation-specific weight matrices
+        (2) $W_r^{(l)} = \sum^B_{b=1}a^{(l)}_{r,b}V_b^{(l)}$
+
+        Linear combination of basis transformations $V_b^{(l)} \in \mathbb{R}^{d^{(l+1)}\times d^{(l)}}$ with learnable
+        coefficients $a^{(l)}_{r,b}$ such that only the coefficients depend on $r$. $B$, the number of basis functions,
+        is a hyperparameter.
+
+        :param input_dim: Input dimension
+        :param output_dim: Output dimension
+        :param num_rels: Number of relation types
+        :param num_bases: Number of bases used in basis decomposition of relation-specific weight matrices
+        :param bias: Optional additive bias
+        :param activation: Activation function
+        :param is_input_layer: Indicates whether this layer is the input layer
+        """
         super(RGCNConv, self).__init__()
         self.input_dim = input_dim
-        self.output_dim = output_dim  # number of features per node
-        self.support = support  # filter support / number of weights
-        self.featureless = featureless  # use/ignore input features
-        self.dropout = dropout
-        self.w_regularizer = nn.L1Loss()
-
-        assert support >= 1
-
-        self.bias = bias
-        self.initial_weights = weights
+        self.output_dim = output_dim
+        self.num_rels = num_rels
         self.num_bases = num_bases
+        self.bias = bias
+        self.activation = activation
+        self.is_input_layer = is_input_layer
 
-        # these will be defined during build()
-        if self.num_bases > 0:
-            self.W = nn.Parameter(
-                torch.empty(self.input_dim * self.num_bases, self.output_dim, dtype=torch.float32, device=device)
-            )
-            self.W_comp = nn.Parameter(
-                torch.empty(self.support, self.num_bases, dtype=torch.float32, device=device)
-            )
-            nn.init.xavier_uniform_(self.W_comp)
-        else:
-            self.W = nn.Parameter(
-                torch.empty(self.input_dim * self.support, self.output_dim, dtype=torch.float32, device=device)
-            )
-        nn.init.xavier_uniform_(self.W)
+        # Number of bases for the basis decomposition can be less or equal to the number of relation types
+        if self.num_bases <= 0 or self.num_bases > self.num_rels:
+            self.num_bases = self.num_rels
+
+        # Weight bases in equation (2), V_b if self.num_bases < self.num_rels, W_r if self.num_bases == self.num_rels
+        self.weight = nn.Parameter(torch.Tensor(self.num_bases, self.in_feat, self.out_feat))
+
+        # Use basis decomposition otherwise if num_bases = num_rels we can just use one weight matrix per relation type
+        if self.num_bases < self.num_rels:
+            # linear combination coefficients a^{(l)}_{r, b} in equation (2)
+            self.w_comp = nn.Parameter(torch.Tensor(self.num_rels, self.num_bases))
 
         if self.bias:
-            self.b = nn.Parameter(torch.empty(self.output_dim, dtype=torch.float32, device=device))
-            nn.init.xavier_uniform_(self.b)
+            self.bias = nn.Parameter(torch.Tensor(output_dim))
 
-        self.dropout = nn.Dropout(dropout)
-
-    def get_output_shape_for(self, input_shapes):
-        features_shape = input_shapes[0]
-        output_shape = (features_shape[0], self.output_dim)
-        return output_shape  # (batch_size, output_dim)
+        # Initialize trainable parameters, see following link for explanation:
+        # https://towardsdatascience.com/weight-initialization-in-neural-networks-a-journey-from-the-basics-to-kaiming-954fb9b47c79
+        # Xavier initialization: improved weight initialization method enabling quicker convergence and higher accuracy
+        # gain is an optional scaling factor, here we use the recommended gain value for the given nonlinearity function
+        nn.init.xavier_uniform_(self.weight,
+                                gain=nn.init.calculate_gain('relu'))
+        if self.num_bases < self.num_rels:
+            nn.init.xavier_uniform_(self.w_comp,
+                                    gain=nn.init.calculate_gain('relu'))
+        if self.bias:
+            nn.init.xavier_uniform_(self.bias,
+                                    gain=nn.init.calculate_gain('relu'))
 
     def forward(self, inputs):
-        features = torch.tensor(inputs[0], dtype=torch.float32, device=device)
-        A = inputs[1:]  # list of basis functions
-        A = [torch.sparse_coo_tensor(torch.LongTensor(a.nonzero()),
-                                     torch.FloatTensor(sparse.find(a)[-1]),
-                                     torch.Size(a.shape)).to(device)
-             if len(sparse.find(a)[-1]) > 0 else torch.sparse_coo_tensor(a.shape[0], a.shape[1])
-             for a in A]
-        # convolve
-        if not self.featureless:
-            supports = list()
-            for i in range(self.support):
-                supports.append(torch.spmm(A[i], features))
-            supports = torch.cat(supports, dim=1)
+        out = None
+        if self.num_bases < self.num_rels:
+            # Generate all weights from bases as in equation (2)
+            # https://pytorch.org/docs/stable/tensor_view.html
+            # View tensor shares the same underlying data with its base tensor, avoids explicit data copy.
+            # Thus allows us to do fast and memory efficient reshaping, slicing and element-wise operations.
+            # self.w has order (self.num_bases, self.in_feat, self.out_feat)
+            weight = self.weight.view(self.in_feat, self.num_bases, self.out_feat)
+            # Matrix product: learnable coefficients a_{r, b} and basis transformations V_b
+            # (self.num_rels, self.num_bases) x (self.in_feat, self.num_bases, self.out_feat)
+            weight = torch.matmul(self.w_comp, weight)  # (self.in_feat, self.num_rels, self.out_feat)
+            weight = weight.view(self.num_rels, self.in_feat, self.out_feat)
+            # TODO why use view instead of permute?
         else:
-            values = torch.cat([i._values() for i in A], dim=-1)
-            indices = torch.cat([torch.cat([j._indices()[0].reshape(1, -1),
-                                            (j._indices()[1] + (i * self.input_dim)).reshape(1, -1)])
-                                 for i, j in enumerate(A)], dim=-1)
-            supports = torch.sparse_coo_tensor(indices, values, torch.Size([A[0].shape[0],
-                                                                            len(A) * self.input_dim]))
-        num_nodes = supports.shape[0]
-        if self.num_bases > 0:
-            # self.W = self.W.reshape(
-            #                   (self.num_bases, self.input_dim, self.output_dim))
-            # self.W = self.W.permute((1, 0, 2)) # (self.input_dim, self.num_bases, self.output_dim)
-            V = torch.matmul(self.W_comp,
-                             self.W.reshape(self.num_bases, self.input_dim, self.output_dim).permute(1, 0, 2))
-            V = torch.reshape(V, (self.support * self.input_dim, self.output_dim))
-            output = torch.spmm(supports, V)
-        else:
-            output = torch.spmm(supports, self.W)
+            weight = self.weight
 
-        # if featureless add dropout to output, by elementwise matmultiplying with column vector of ones,
-        # with dropout applied to the vector of ones.
-        if self.featureless:
-            tmp = torch.ones(num_nodes)
-            tmp_do = self.dropout(tmp)
-            output = (output.transpose(1, 0) * tmp_do).transpose(1, 0)
-
-        if self.bias:
-            output += self.b
-        return F.relu(output)
+        # TODO: message passing
+        return out
