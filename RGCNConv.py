@@ -65,7 +65,9 @@ class RGCNConv(nn.Module):
 
         if self.bias:
             self.bias = nn.Parameter(torch.Tensor(output_dim))
+        self.reset_parameters()
 
+    def reset_parameters(self):
         # Initialize trainable parameters, see following link for explanation:
         # https://towardsdatascience.com/weight-initialization-in-neural-networks-a-journey-from-the-basics-to-kaiming-954fb9b47c79
         # Xavier initialization: improved weight initialization method enabling quicker convergence and higher accuracy
@@ -79,8 +81,10 @@ class RGCNConv(nn.Module):
             nn.init.xavier_uniform_(self.bias,
                                     gain=nn.init.calculate_gain('relu'))
 
-    def forward(self, inputs):
+    def forward(self, x, adj_t):
         out = None
+
+        # Calculate relation specific weight matrices
         if self.num_bases < self.num_rels:
             # Generate all weights from bases as in equation (2)
             # https://pytorch.org/docs/stable/tensor_view.html
@@ -88,6 +92,7 @@ class RGCNConv(nn.Module):
             # Thus allows us to do fast and memory efficient reshaping, slicing and element-wise operations.
             # self.w has order (self.num_bases, self.in_feat, self.out_feat)
             weight = self.weight.view(self.in_feat, self.num_bases, self.out_feat)
+
             # Matrix product: learnable coefficients a_{r, b} and basis transformations V_b
             # (self.num_rels, self.num_bases) x (self.in_feat, self.num_bases, self.out_feat)
             weight = torch.matmul(self.w_comp, weight)  # (self.in_feat, self.num_rels, self.out_feat)

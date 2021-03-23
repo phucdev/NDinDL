@@ -70,7 +70,11 @@ class RGCN(torch.nn.Module):
         return RGCNConv(self.h_dim, self.out_dim, self.num_rels, self.num_bases,
                         activation=partial(F.softmax, dim=1))
 
-    def forward(self, edge_index, edge_type):
+    def reset_parameters(self):
+        for layer in self.layers:
+            layer.reset_parameters()
+
+    def forward(self, x, adj_t):
         out = None
         # TODO
         #  Note:
@@ -129,6 +133,11 @@ def main(args):
         num_bases=args["num_bases"]
     ).to(device)
     data = data.to(device)
+
+    # TODO: preprocess data
+    #  Data(edge_index=[2, 58086], edge_type=[58086], test_idx=[36], test_y=[36], train_idx=[140], train_y=[140])
+    #  edge_index: edge given by source and target node
+
     optimizer = torch.optim.Adam(model.parameters(), lr=args["lr"], weight_decay=0.0005)
     loss_fn = F.nll_loss
 
