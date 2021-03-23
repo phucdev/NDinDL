@@ -14,7 +14,9 @@ def normalize(matrix):
 
 def get_adj_t(data):
     adj_t = None
-
+    # TODO: preprocess data
+    #  Data(edge_index=[2, 58086], edge_type=[58086], test_idx=[36], test_y=[36], train_idx=[140], train_y=[140])
+    #  edge_index: edge given by source and target node
     num_rels = data.num_rels
     num_nodes = data.num_nodes
     edge_index = data.edge_index

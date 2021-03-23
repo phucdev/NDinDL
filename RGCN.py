@@ -7,7 +7,21 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.datasets import Entities
 from torch_geometric.utils.num_nodes import maybe_num_nodes
+import scipy.sparse as sp
 from RGCNConv import RGCNConv
+import utils
+
+
+# https://github.com/mjDelta/relation-gcn-pytorch/blob/master/train.py
+def to_sparse_tensor(sparse_array):
+    if len(sp.find(sparse_array)[-1]) > 0:
+        v = torch.FloatTensor(sp.find(sparse_array)[-1])
+        i = torch.LongTensor(sparse_array.nonzero())
+        shape = sparse_array.shape
+        sparse_tensor = torch.sparse_coo_tensor(i, v, torch.Size(shape))
+    else:
+        sparse_tensor = torch.sparse_coo_tensor(sparse_array.shape[0], sparse_array.shape[1])
+    return sparse_tensor
 
 
 # Somewhat inspired by: https://docs.dgl.ai/en/0.4.x/tutorials/models/1_gnn/4_rgcn.html
@@ -86,15 +100,15 @@ class RGCN(torch.nn.Module):
         return out
 
 
-def train(model, data, optimizer, loss_fn):
+def train(model, x, adj_t, optimizer, loss_fn, train_idx, train_y):
     model.train()
 
     # Zero grad the optimizer
     optimizer.zero_grad()
     # Feed the data into the model
-    out = model(data.edge_index, data.edge_type)
+    out = model(x, adj_t)
     # Feed the sliced output and label to loss_fn
-    loss = loss_fn(out[data.train_idx], data.train_y)
+    loss = loss_fn(out[train_idx], train_y)
 
     # Backpropagation, optimizer
     loss.backward()
@@ -103,17 +117,17 @@ def train(model, data, optimizer, loss_fn):
 
 
 @torch.no_grad()
-def test(model, data):
+def test(model, x, adj_t, train_idx, train_y, test_idx, test_y):
     model.eval()
 
     # Output of model on all data
-    out = model(data.edge_index, data.edge_type)
+    out = model(x, adj_t)
     # Get predicted class labels
     pred = out.argmax(dim=-1)
 
     # Evaluate prediction accuracy
-    train_acc = pred[data.train_idx].eq(data.train_y).to(torch.float).mean()
-    test_acc = pred[data.test_idx].eq(data.test_y).to(torch.float).mean()
+    train_acc = pred[train_idx].eq(train_y).to(torch.float).mean()
+    test_acc = pred[test_idx].eq(test_y).to(torch.float).mean()
     return train_acc.item(), test_acc.item()
 
 
@@ -134,16 +148,22 @@ def main(args):
     ).to(device)
     data = data.to(device)
 
-    # TODO: preprocess data
-    #  Data(edge_index=[2, 58086], edge_type=[58086], test_idx=[36], test_y=[36], train_idx=[140], train_y=[140])
-    #  edge_index: edge given by source and target node
-
     optimizer = torch.optim.Adam(model.parameters(), lr=args["lr"], weight_decay=0.0005)
     loss_fn = F.nll_loss
 
+    # Construct relation type specific adjacency matrices from data.edge_index and data.edge_type in utils
+    A = utils.get_adj_t(data)
+    adj_t = []
+    for a in A:
+        nor_a = utils.normalize(a)
+        if len(nor_a.nonzero()[0]) > 0:
+            tensor_a = to_sparse_tensor(nor_a)
+            adj_t.append(tensor_a.to(device))
+    x = None    # TODO use learnable node embeddings?
+
     for epoch in range(1, args["epochs"] + 1):
-        loss = train(model, data, optimizer, loss_fn)
-        train_acc, test_acc = test()
+        loss = train(model, x, adj_t, optimizer, loss_fn, data.train_idx, data.train_y)
+        train_acc, test_acc = test(model, x, adj_t, data.train_idx, data.train_y, data.test_idx, data.test_y)
         print(f'Epoch: {epoch:02d}, Loss: {loss:.4f}, Train: {train_acc:.4f} '
               f'Test: {test_acc:.4f}')
 
