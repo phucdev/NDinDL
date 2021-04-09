@@ -152,7 +152,7 @@ def main(args):
     loss_fn = F.nll_loss
 
     # Construct relation type specific adjacency matrices from data.edge_index and data.edge_type in utils
-    A = utils.get_adj_t(data)
+    A, y = utils.convert_data(data)
     adj_t = []
     for a in A:
         nor_a = utils.normalize(a)
