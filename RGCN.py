@@ -100,7 +100,7 @@ class RGCN(torch.nn.Module):
         return out
 
 
-def train(model, x, adj_t, optimizer, loss_fn, train_idx, train_y):
+def train(model, x, adj_t, optimizer, loss_fn, train_idx, y):
     model.train()
 
     # Zero grad the optimizer
@@ -108,6 +108,7 @@ def train(model, x, adj_t, optimizer, loss_fn, train_idx, train_y):
     # Feed the data into the model
     out = model(x, adj_t)
     # Feed the sliced output and label to loss_fn
+    train_y = y[train_idx]
     loss = loss_fn(out[train_idx], train_y)
 
     # Backpropagation, optimizer
@@ -117,7 +118,7 @@ def train(model, x, adj_t, optimizer, loss_fn, train_idx, train_y):
 
 
 @torch.no_grad()
-def test(model, x, adj_t, train_idx, train_y, test_idx, test_y):
+def test(model, x, adj_t, train_idx, test_idx, y):
     model.eval()
 
     # Output of model on all data
@@ -126,7 +127,9 @@ def test(model, x, adj_t, train_idx, train_y, test_idx, test_y):
     pred = out.argmax(dim=-1)
 
     # Evaluate prediction accuracy
+    train_y = y[train_idx]
     train_acc = pred[train_idx].eq(train_y).to(torch.float).mean()
+    test_y = y[test_idx]
     test_acc = pred[test_idx].eq(test_y).to(torch.float).mean()
     return train_acc.item(), test_acc.item()
 
@@ -149,10 +152,11 @@ def main(args):
     data = data.to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args["lr"], weight_decay=0.0005)
-    loss_fn = F.nll_loss
+    loss_fn = F.nll_loss  # TODO mjDelta use nn.CrossEntropyLoss()
 
     # Construct relation type specific adjacency matrices from data.edge_index and data.edge_type in utils
     A, y = utils.convert_data(data)
+    y = y.todense()
     adj_t = []
     for a in A:
         nor_a = utils.normalize(a)
@@ -162,8 +166,8 @@ def main(args):
     x = None    # TODO use learnable node embeddings?
 
     for epoch in range(1, args["epochs"] + 1):
-        loss = train(model, x, adj_t, optimizer, loss_fn, data.train_idx, data.train_y)
-        train_acc, test_acc = test(model, x, adj_t, data.train_idx, data.train_y, data.test_idx, data.test_y)
+        loss = train(model, x, adj_t, optimizer, loss_fn, data.train_idx, y)
+        train_acc, test_acc = test(model, x, adj_t, data.train_idx, data.test_idx, y)
         print(f'Epoch: {epoch:02d}, Loss: {loss:.4f}, Train: {train_acc:.4f} '
               f'Test: {test_acc:.4f}')
 
