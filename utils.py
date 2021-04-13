@@ -6,8 +6,7 @@ from tqdm import tqdm
 # https://github.com/mjDelta/relation-gcn-pytorch/blob/master/utils.py
 def normalize(matrix):
     row_sum = np.array(matrix.sum(axis=1)).flatten()
-    row_sum_inv = 1. / row_sum
-    row_sum_inv[np.isinf(row_sum_inv)] = 0
+    row_sum_inv = np.divide(np.ones_like(row_sum), row_sum, out=np.zeros_like(row_sum), where=row_sum != 0)
     D_inv = sp.diags(row_sum_inv)
     out = D_inv.dot(matrix).tocsr()
     return out
@@ -20,6 +19,7 @@ def get_adjacency_matrices(data):
     :return:
         A: list of relation type specific adjacency matrices
     """
+    print("Converting torch_geometric.datasets.entities data to relation type specific adjacency matrices")
     num_rels = data.num_rels
     num_nodes = data.num_nodes
 
