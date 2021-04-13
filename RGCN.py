@@ -5,8 +5,7 @@ from functools import partial
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.datasets import Entities
-from torch_geometric.utils.num_nodes import maybe_num_nodes
+import pickle
 import scipy.sparse as sp
 from RGCNConv import RGCNConv
 import utils
@@ -121,19 +120,28 @@ def test(model, x, adj_t, train_idx, train_y, test_idx, test_y):
 
 
 def main(args):
-    path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'Entities')
-    dataset = Entities(path, args["dataset"])
-    data = dataset[0]
+    path = osp.join(osp.dirname(osp.realpath(__file__)), 'data', args["dataset"].lower() + '.pickle')
+    with open(path, 'rb') as f:
+        data = pickle.load(f)
+    A = data['A']
+    y = data['y']
+    train_idx = data['train_idx']
+    test_idx = data['test_idx']
 
-    data.num_nodes = maybe_num_nodes(data.edge_index)
-    data.num_rels = dataset.num_relations
+    num_nodes = y.shape[0]
+    num_classes = y.shape[1]
+    num_rels = len(A)
+
+    y = y.argmax(axis=-1)
+    train_y = y[train_idx]
+    test_y = y[test_idx]
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = RGCN(
-        num_nodes=data.num_nodes,
+        num_nodes=num_nodes,
         h_dim=args["h_dim"],
-        out_dim=dataset.num_classes,
-        num_rels=dataset.num_relations,
+        out_dim=num_classes,
+        num_rels=num_rels,
         num_bases=args["num_bases"],
         dropout=args["dropout"]
     ).to(device)
@@ -141,8 +149,6 @@ def main(args):
     optimizer = torch.optim.Adam(model.parameters(), lr=args["lr"], weight_decay=args["l2"])
     loss_fn = nn.CrossEntropyLoss()
 
-    # Construct relation type specific adjacency matrices from data.edge_index and data.edge_type in utils
-    A = utils.get_adjacency_matrices(data)
     adj_t = []
     for a in A:
         nor_a = utils.normalize(a)
@@ -152,8 +158,8 @@ def main(args):
     x = None
 
     for epoch in range(1, args["epochs"] + 1):
-        loss = train(model, x, adj_t, optimizer, loss_fn, data.train_idx, data.train_y)
-        train_acc, test_acc = test(model, x, adj_t, data.train_idx, data.train_y, data.test_idx, data.test_y)
+        loss = train(model, x, adj_t, optimizer, loss_fn, train_idx, train_y)
+        train_acc, test_acc = test(model, x, adj_t, train_idx, train_y, test_idx, test_y)
         print(f'Epoch: {epoch:02d}, Loss: {loss:.4f}, Train: {train_acc:.4f} '
               f'Test: {test_acc:.4f}')
 
@@ -167,7 +173,7 @@ if __name__ == "__main__":
     parser.add_argument('--num_hidden_layers', type=int, default=0, help='Number of hidden layers')
     parser.add_argument('--dropout', type=float, default=0., help='Dropout rate')
     parser.add_argument('--lr', type=int, default=0.01, help='Learning rate')
-    parser.add_argument('--lr', type=int, default=0., help='Weight decay')
+    parser.add_argument('--l2', type=int, default=0., help='Weight decay')
     parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
     arguments = parser.parse_args()
 
@@ -178,6 +184,7 @@ if __name__ == "__main__":
         'num_hidden_layers': arguments.num_hidden_layers,
         'dropout': arguments.dropout,
         'lr': arguments.lr,
+        'l2': arguments.l2,
         'epochs': arguments.epochs,
     }
     print(f"Model config:\n{args_dict}")
