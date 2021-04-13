@@ -28,6 +28,7 @@ def get_adjacency_matrices(data):
     edges = list(zip(data.edge_index[0].numpy(), data.edge_index[1].numpy()))
     for rel, (src, dst) in zip(data.edge_type, edges):
         A[rel][src][dst] = 1
+
     for i, m in tqdm(enumerate(A)):
         A[i] = sp.csr_matrix(m)
 

@@ -54,9 +54,6 @@ class RGCN(torch.nn.Module):
         # create rgcn layers
         self.build_model()
 
-        # create initial features
-        self.features = self.create_features()
-
     def build_model(self):
         # input to hidden
         i2h = self.build_input_layer()
@@ -68,11 +65,6 @@ class RGCN(torch.nn.Module):
         # hidden to output
         h2o = self.build_output_layer()
         self.layers.append(h2o)
-
-    # initialize feature for each node
-    def create_features(self):
-        features = torch.arange(self.num_nodes)
-        return features
 
     def build_input_layer(self):
         return RGCNConv(self.num_nodes, self.h_dim, self.num_rels, self.num_bases)
@@ -88,8 +80,6 @@ class RGCN(torch.nn.Module):
             layer.reset_parameters()
 
     def forward(self, x, adj_t):
-        if x is None and self.features is not None:
-            x = self.features
         for layer in self.layers:
             x = layer(x, adj_t)
             if not layer.is_output_layer:
@@ -106,7 +96,7 @@ def train(model, x, adj_t, optimizer, loss_fn, train_idx, train_y):
     # Feed the data into the model
     out = model(x, adj_t)
     # Feed the sliced output and label to loss_fn
-    labels = torch.LongTensor(train_y).to(model.device)
+    labels = torch.LongTensor(train_y).to(out.device)
     loss = loss_fn(out[train_idx], labels)
 
     # Backpropagation, optimizer
@@ -122,7 +112,7 @@ def test(model, x, adj_t, train_idx, train_y, test_idx, test_y):
     # Output of model on all data
     out = model(x, adj_t)
     # Get predicted class labels
-    pred = out.argmax(dim=-1)
+    pred = out.argmax(dim=-1).cpu()
 
     # Evaluate prediction accuracy
     train_acc = pred[train_idx].eq(train_y).to(torch.float).mean()
@@ -136,6 +126,7 @@ def main(args):
     data = dataset[0]
 
     data.num_nodes = maybe_num_nodes(data.edge_index)
+    data.num_rels = dataset.num_relations
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = RGCN(
@@ -146,7 +137,6 @@ def main(args):
         num_bases=args["num_bases"],
         dropout=args["dropout"]
     ).to(device)
-    data = data.to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args["lr"], weight_decay=0.0005)
     loss_fn = nn.CrossEntropyLoss()
@@ -170,7 +160,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', type=str, choices=['AIFB', 'MUTAG'])
+    parser.add_argument('--dataset', type=str, choices=['AIFB', 'MUTAG'], default='AIFB')
     parser.add_argument('--h_dim', type=int, default=16)
     parser.add_argument('--num_bases', type=int, default=10)
     parser.add_argument('--num_hidden_layers', type=int, default=1)

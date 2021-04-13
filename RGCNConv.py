@@ -56,7 +56,7 @@ class RGCNConv(nn.Module):
             self.num_bases = self.num_rels
 
         # Weight bases in equation (2), V_b if self.num_bases < self.num_rels, W_r if self.num_bases == self.num_rels
-        self.weight = nn.Parameter(torch.Tensor(self.num_bases, self.in_feat, self.out_feat))
+        self.weight = nn.Parameter(torch.Tensor(self.num_bases * self.input_dim, self.output_dim))
 
         # Use basis decomposition otherwise if num_bases = num_rels we can just use one weight matrix per relation type
         if self.num_bases < self.num_rels:
@@ -64,7 +64,7 @@ class RGCNConv(nn.Module):
             self.w_comp = nn.Parameter(torch.Tensor(self.num_rels, self.num_bases))
 
         if self.bias:
-            self.bias = nn.Parameter(torch.Tensor(output_dim))
+            self.bias = nn.Parameter(torch.Tensor(self.output_dim))
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -80,28 +80,34 @@ class RGCNConv(nn.Module):
 
     def forward(self, x, adj_t):
         supports = []
+        num_nodes = adj_t[0].shape[0]
         for i, adj in enumerate(adj_t):
-            supports.append(torch.spmm(adj, x))
-        supports = torch.cat(supports, dim=1)   # TODO what is the shape? (num_rel, num_nodes, num_nodes...)
+            if x is not None:
+                supports.append(torch.spmm(adj, x))
+            else:
+                supports.append(adj)
+        supports = torch.cat(supports, dim=1)   # (num_rel, num_nodes*num_rel)
 
         # Calculate relation specific weight matrices
         if self.num_bases < self.num_rels:
             # Generate all weights from bases as in equation (2)
-            # https://pytorch.org/docs/stable/tensor_view.html
-            # View tensor shares the same underlying data with its base tensor, avoids explicit data copy.
-            # Thus allows us to do fast and memory efficient reshaping, slicing and element-wise operations.
-            # self.w has order (self.num_bases, self.in_feat, self.out_feat)
-            weight = self.weight.view(self.in_feat, self.num_bases, self.out_feat)
+            weight = torch.reshape(self.weight, (self.num_bases, self.input_dim, self.output_dim)).permute(1, 0, 2)
 
             # Matrix product: learnable coefficients a_{r, b} and basis transformations V_b
-            # (self.num_rels, self.num_bases) x (self.in_feat, self.num_bases, self.out_feat)
-            weight = torch.matmul(self.w_comp, weight)  # (self.in_feat, self.num_rels, self.out_feat)
-            weight = weight.view(self.num_rels, self.in_feat, self.out_feat)
-            # TODO why use view instead of permute?
+            # (self.num_rels, self.num_bases) x (self.input_dim, self.num_bases, self.output_dim)
+            weight = torch.matmul(self.w_comp, weight)  # (self.input_dim, self.num_rels, self.output_dim)
+            weight = weight.reshape(self.input_dim * self.num_rels, self.output_dim)
         else:
             weight = self.weight
 
-        out = torch.spmm(supports, weight)  # TODO what is the shape? (num_rel, ...)
+        out = torch.spmm(supports, weight)  # (num_nodes, num_rels)
+
+        # If featureless add dropout to output, by elementwise multiplying with column vector of ones,
+        # with dropout applied to the vector of ones.
+        if x is not None:
+            temp = torch.ones(num_nodes).to(out.device)
+            temp_drop = F.dropout(temp, self.dropout)
+            out = (out.transpose(1, 0) * temp_drop).transpose(1, 0)
 
         if self.bias:
             out += self.bias
