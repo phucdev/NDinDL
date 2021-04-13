@@ -67,24 +67,24 @@ class RGCN(torch.nn.Module):
         self.layers.append(h2o)
 
     def build_input_layer(self):
-        return RGCNConv(self.num_nodes, self.h_dim, self.num_rels, self.num_bases)
+        return RGCNConv(self.num_nodes, self.h_dim, self.num_rels, self.num_bases, activation=F.relu)
 
     def build_hidden_layer(self):
-        return RGCNConv(self.h_dim, self.h_dim, self.num_rels, self.num_bases)
+        return RGCNConv(self.h_dim, self.h_dim, self.num_rels, self.num_bases, activation=F.relu)
 
     def build_output_layer(self):
-        return RGCNConv(self.h_dim, self.out_dim, self.num_rels, self.num_bases)
+        return RGCNConv(self.h_dim, self.out_dim, self.num_rels, self.num_bases, activation=partial(F.softmax, dim=1))
 
     def reset_parameters(self):
         for layer in self.layers:
             layer.reset_parameters()
 
     def forward(self, x, adj_t):
+        out = x
         for layer in self.layers:
-            x = layer(x, adj_t)
+            out = layer(out, adj_t)
             if not layer.is_output_layer:
-                x = F.dropout(F.relu(x), self.dropout, self.training)
-        out = F.softmax(x, dim=1)
+                out = F.dropout(out, self.dropout, self.training)
         return out
 
 
@@ -138,7 +138,7 @@ def main(args):
         dropout=args["dropout"]
     ).to(device)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=args["lr"], weight_decay=0.0005)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args["lr"], weight_decay=args["l2"])
     loss_fn = nn.CrossEntropyLoss()
 
     # Construct relation type specific adjacency matrices from data.edge_index and data.edge_type in utils
@@ -160,13 +160,15 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', type=str, choices=['AIFB', 'MUTAG'], default='AIFB')
-    parser.add_argument('--h_dim', type=int, default=16)
-    parser.add_argument('--num_bases', type=int, default=10)
-    parser.add_argument('--num_hidden_layers', type=int, default=1)
-    parser.add_argument('--dropout', type=float, default=0.5)
-    parser.add_argument('--lr', type=int, default=0.01)
-    parser.add_argument('--epochs', type=int, default=50)
+    parser.add_argument('--dataset', type=str, choices=['AIFB', 'MUTAG', 'BGS', 'AM'], default='AIFB',
+                        help="Dataset string ('AIFB', 'MUTAG', 'BGS', 'AM')")
+    parser.add_argument('--h_dim', type=int, default=16, help='Number of hidden units')
+    parser.add_argument('--num_bases', type=int, default=-1, help='Number of bases used (-1: all')
+    parser.add_argument('--num_hidden_layers', type=int, default=0, help='Number of hidden layers')
+    parser.add_argument('--dropout', type=float, default=0., help='Dropout rate')
+    parser.add_argument('--lr', type=int, default=0.01, help='Learning rate')
+    parser.add_argument('--lr', type=int, default=0., help='Weight decay')
+    parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
     arguments = parser.parse_args()
 
     args_dict = {
@@ -178,4 +180,5 @@ if __name__ == "__main__":
         'lr': arguments.lr,
         'epochs': arguments.epochs,
     }
+    print(f"Model config:\n{args_dict}")
     main(args_dict)

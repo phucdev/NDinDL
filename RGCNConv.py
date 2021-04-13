@@ -9,7 +9,8 @@ class RGCNConv(nn.Module):
                  output_dim,
                  num_rels,
                  num_bases=-1,
-                 bias=None,
+                 bias=False,
+                 activation=None,
                  dropout=0.5,
                  is_output_layer=False):
         r"""The relational graph convolutional operator from the `"Modeling
@@ -39,6 +40,7 @@ class RGCNConv(nn.Module):
         :param num_rels: Number of relation types
         :param num_bases: Number of bases used in basis decomposition of relation-specific weight matrices
         :param bias: Optional additive bias
+        :param activation: Activation function
         :param dropout: Dropout
         :param is_output_layer: Indicates whether this layer is the output layer
         """
@@ -48,6 +50,7 @@ class RGCNConv(nn.Module):
         self.num_rels = num_rels
         self.num_bases = num_bases
         self.bias = bias
+        self.activation = activation
         self.dropout = dropout
         self.is_output_layer = is_output_layer
 
@@ -64,7 +67,7 @@ class RGCNConv(nn.Module):
             self.w_comp = nn.Parameter(torch.Tensor(self.num_rels, self.num_bases))
 
         if self.bias:
-            self.bias = nn.Parameter(torch.Tensor(self.output_dim))
+            self.b = nn.Parameter(torch.Tensor(self.output_dim))
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -76,7 +79,7 @@ class RGCNConv(nn.Module):
         if self.num_bases < self.num_rels:
             nn.init.xavier_uniform_(self.w_comp, gain=nn.init.calculate_gain('relu'))
         if self.bias:
-            nn.init.xavier_uniform_(self.bias, gain=nn.init.calculate_gain('relu'))
+            nn.init.xavier_uniform_(self.b, gain=nn.init.calculate_gain('relu'))
 
     def forward(self, x, adj_t):
         supports = []
@@ -91,7 +94,7 @@ class RGCNConv(nn.Module):
         # Calculate relation specific weight matrices
         if self.num_bases < self.num_rels:
             # Generate all weights from bases as in equation (2)
-            weight = torch.reshape(self.weight, (self.num_bases, self.input_dim, self.output_dim)).permute(1, 0, 2)
+            weight = self.weight.reshape(self.num_bases, self.input_dim, self.output_dim).permute(1, 0, 2)
 
             # Matrix product: learnable coefficients a_{r, b} and basis transformations V_b
             # (self.num_rels, self.num_bases) x (self.input_dim, self.num_bases, self.output_dim)
@@ -110,5 +113,7 @@ class RGCNConv(nn.Module):
             out = (out.transpose(1, 0) * temp_drop).transpose(1, 0)
 
         if self.bias:
-            out += self.bias
+            out += self.b
+
+        out = self.activation(out)
         return out
