@@ -27,7 +27,7 @@ def to_sparse_tensor(sparse_array):
 # Somewhat inspired by: https://docs.dgl.ai/en/0.4.x/tutorials/models/1_gnn/4_rgcn.html
 class RGCN(torch.nn.Module):
     def __init__(self, num_nodes, h_dim, out_dim, num_rels,
-                 num_bases=-1, num_hidden_layers=1):
+                 num_bases=-1, num_hidden_layers=1, dropout=0.5):
         """
         Implementation of R-GCN from the `"Modeling
         Relational Data with Graph Convolutional Networks"
@@ -39,6 +39,7 @@ class RGCN(torch.nn.Module):
         :param num_rels: Number of relation types
         :param num_bases: Number of basis functions
         :param num_hidden_layers: Number of hidden layers
+        :param dropout: Dropout probability
         """
         super(RGCN, self).__init__()
         self.num_nodes = num_nodes
@@ -47,6 +48,7 @@ class RGCN(torch.nn.Module):
         self.num_rels = num_rels
         self.num_bases = num_bases
         self.num_hidden_layers = num_hidden_layers
+        self.dropout = dropout
 
         self.layers = nn.ModuleList()
         # create rgcn layers
@@ -73,34 +75,30 @@ class RGCN(torch.nn.Module):
         return features
 
     def build_input_layer(self):
-        return RGCNConv(self.num_nodes, self.h_dim, self.num_rels, self.num_bases,
-                        activation=F.relu, is_input_layer=True)
+        return RGCNConv(self.num_nodes, self.h_dim, self.num_rels, self.num_bases)
 
     def build_hidden_layer(self):
-        return RGCNConv(self.h_dim, self.h_dim, self.num_rels, self.num_bases,
-                        activation=F.relu)
+        return RGCNConv(self.h_dim, self.h_dim, self.num_rels, self.num_bases)
 
     def build_output_layer(self):
-        return RGCNConv(self.h_dim, self.out_dim, self.num_rels, self.num_bases,
-                        activation=partial(F.softmax, dim=1))
+        return RGCNConv(self.h_dim, self.out_dim, self.num_rels, self.num_bases)
 
     def reset_parameters(self):
         for layer in self.layers:
             layer.reset_parameters()
 
     def forward(self, x, adj_t):
-        out = None
-        # TODO
-        #  Note:
-        #  1. Construct the network as described in the paper/ tutorial
-        #  2. torch.nn.functional.relu and torch.nn.functional.dropout are useful
-        #  More information please refer to the documentation:
-        #  https://pytorch.org/docs/stable/nn.functional.html
-        #  3. Don't forget to set F.dropout training to self.training
+        if x is None and self.features is not None:
+            x = self.features
+        for layer in self.layers:
+            x = layer(x, adj_t)
+            if not layer.is_output_layer:
+                x = F.dropout(F.relu(x), self.dropout, self.training)
+        out = F.softmax(x, dim=1)
         return out
 
 
-def train(model, x, adj_t, optimizer, loss_fn, train_idx, y):
+def train(model, x, adj_t, optimizer, loss_fn, train_idx, train_y):
     model.train()
 
     # Zero grad the optimizer
@@ -108,8 +106,8 @@ def train(model, x, adj_t, optimizer, loss_fn, train_idx, y):
     # Feed the data into the model
     out = model(x, adj_t)
     # Feed the sliced output and label to loss_fn
-    train_y = y[train_idx]
-    loss = loss_fn(out[train_idx], train_y)
+    labels = torch.LongTensor(train_y).to(model.device)
+    loss = loss_fn(out[train_idx], labels)
 
     # Backpropagation, optimizer
     loss.backward()
@@ -118,7 +116,7 @@ def train(model, x, adj_t, optimizer, loss_fn, train_idx, y):
 
 
 @torch.no_grad()
-def test(model, x, adj_t, train_idx, test_idx, y):
+def test(model, x, adj_t, train_idx, train_y, test_idx, test_y):
     model.eval()
 
     # Output of model on all data
@@ -127,9 +125,7 @@ def test(model, x, adj_t, train_idx, test_idx, y):
     pred = out.argmax(dim=-1)
 
     # Evaluate prediction accuracy
-    train_y = y[train_idx]
     train_acc = pred[train_idx].eq(train_y).to(torch.float).mean()
-    test_y = y[test_idx]
     test_acc = pred[test_idx].eq(test_y).to(torch.float).mean()
     return train_acc.item(), test_acc.item()
 
@@ -147,27 +143,27 @@ def main(args):
         h_dim=args["h_dim"],
         out_dim=dataset.num_classes,
         num_rels=dataset.num_relations,
-        num_bases=args["num_bases"]
+        num_bases=args["num_bases"],
+        dropout=args["dropout"]
     ).to(device)
     data = data.to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args["lr"], weight_decay=0.0005)
-    loss_fn = F.nll_loss  # TODO mjDelta use nn.CrossEntropyLoss()
+    loss_fn = nn.CrossEntropyLoss()
 
     # Construct relation type specific adjacency matrices from data.edge_index and data.edge_type in utils
-    A, y = utils.convert_data(data)
-    y = y.todense()
+    A = utils.get_adjacency_matrices(data)
     adj_t = []
     for a in A:
         nor_a = utils.normalize(a)
         if len(nor_a.nonzero()[0]) > 0:
             tensor_a = to_sparse_tensor(nor_a)
             adj_t.append(tensor_a.to(device))
-    x = None    # TODO use learnable node embeddings?
+    x = None
 
     for epoch in range(1, args["epochs"] + 1):
-        loss = train(model, x, adj_t, optimizer, loss_fn, data.train_idx, y)
-        train_acc, test_acc = test(model, x, adj_t, data.train_idx, data.test_idx, y)
+        loss = train(model, x, adj_t, optimizer, loss_fn, data.train_idx, data.train_y)
+        train_acc, test_acc = test(model, x, adj_t, data.train_idx, data.train_y, data.test_idx, data.test_y)
         print(f'Epoch: {epoch:02d}, Loss: {loss:.4f}, Train: {train_acc:.4f} '
               f'Test: {test_acc:.4f}')
 
@@ -188,8 +184,8 @@ if __name__ == "__main__":
         'h_dim': arguments.h_dim,
         'num_bases': arguments.num_bases,
         'num_hidden_layers': arguments.num_hidden_layers,
-        'dropout': 0.5,
-        'lr': 0.01,
+        'dropout': arguments.dropout,
+        'lr': arguments.lr,
         'epochs': arguments.epochs,
     }
     main(args_dict)

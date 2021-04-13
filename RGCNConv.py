@@ -10,8 +10,8 @@ class RGCNConv(nn.Module):
                  num_rels,
                  num_bases=-1,
                  bias=None,
-                 activation=None,
-                 is_input_layer=False):
+                 dropout=0.5,
+                 is_output_layer=False):
         r"""The relational graph convolutional operator from the `"Modeling
         Relational Data with Graph Convolutional Networks"
         <https://arxiv.org/abs/1703.06103>`_ paper
@@ -39,8 +39,8 @@ class RGCNConv(nn.Module):
         :param num_rels: Number of relation types
         :param num_bases: Number of bases used in basis decomposition of relation-specific weight matrices
         :param bias: Optional additive bias
-        :param activation: Activation function
-        :param is_input_layer: Indicates whether this layer is the input layer
+        :param dropout: Dropout
+        :param is_output_layer: Indicates whether this layer is the output layer
         """
         super(RGCNConv, self).__init__()
         self.input_dim = input_dim
@@ -48,8 +48,8 @@ class RGCNConv(nn.Module):
         self.num_rels = num_rels
         self.num_bases = num_bases
         self.bias = bias
-        self.activation = activation
-        self.is_input_layer = is_input_layer
+        self.dropout = dropout
+        self.is_output_layer = is_output_layer
 
         # Number of bases for the basis decomposition can be less or equal to the number of relation types
         if self.num_bases <= 0 or self.num_bases > self.num_rels:
@@ -72,17 +72,17 @@ class RGCNConv(nn.Module):
         # https://towardsdatascience.com/weight-initialization-in-neural-networks-a-journey-from-the-basics-to-kaiming-954fb9b47c79
         # Xavier initialization: improved weight initialization method enabling quicker convergence and higher accuracy
         # gain is an optional scaling factor, here we use the recommended gain value for the given nonlinearity function
-        nn.init.xavier_uniform_(self.weight,
-                                gain=nn.init.calculate_gain('relu'))
+        nn.init.xavier_uniform_(self.weight, gain=nn.init.calculate_gain('relu'))
         if self.num_bases < self.num_rels:
-            nn.init.xavier_uniform_(self.w_comp,
-                                    gain=nn.init.calculate_gain('relu'))
+            nn.init.xavier_uniform_(self.w_comp, gain=nn.init.calculate_gain('relu'))
         if self.bias:
-            nn.init.xavier_uniform_(self.bias,
-                                    gain=nn.init.calculate_gain('relu'))
+            nn.init.xavier_uniform_(self.bias, gain=nn.init.calculate_gain('relu'))
 
     def forward(self, x, adj_t):
-        out = None
+        supports = []
+        for i, adj in enumerate(adj_t):
+            supports.append(torch.spmm(adj, x))
+        supports = torch.cat(supports, dim=1)   # TODO what is the shape? (num_rel, num_nodes, num_nodes...)
 
         # Calculate relation specific weight matrices
         if self.num_bases < self.num_rels:
@@ -101,5 +101,8 @@ class RGCNConv(nn.Module):
         else:
             weight = self.weight
 
-        # TODO: message passing
+        out = torch.spmm(supports, weight)  # TODO what is the shape? (num_rel, ...)
+
+        if self.bias:
+            out += self.bias
         return out

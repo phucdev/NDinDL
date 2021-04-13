@@ -13,14 +13,12 @@ def normalize(matrix):
     return out
 
 
-def convert_data(data):
+def get_adjacency_matrices(data):
     """
-    Converts torch_geometric.datasets.entities data to relation type specific adjacency matrices and
-    one-hot encoded label matrix
+    Converts torch_geometric.datasets.entities data to relation type specific adjacency matrices
     :param data: torch_geometric.datasets.entities data
     :return:
         A: list of relation type specific adjacency matrices
-        y: one-hot encoded labels
     """
     num_rels = data.num_rels
     num_nodes = data.num_nodes
@@ -28,14 +26,9 @@ def convert_data(data):
     A = [np.zeros((num_nodes, num_nodes)) for _ in range(num_rels)]
 
     edges = list(zip(data.edge_index[0].numpy(), data.edge_index[1].numpy()))
-    for rel, (src, dst)  in zip(data.edge_type, edges):
+    for rel, (src, dst) in zip(data.edge_type, edges):
         A[rel][src][dst] = 1
     for i, m in tqdm(enumerate(A)):
         A[i] = sp.csr_matrix(m)
 
-    y = np.zeros((8285, 4))
-    for idx, label in zip(data.train_idx, data.train_y.numpy()):
-        y[idx][label] = 1
-    for idx, label in zip(data.test_idx, data.test_y.numpy()):
-        y[idx][label] = 1
-    return A, y
+    return A
