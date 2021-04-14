@@ -1,6 +1,5 @@
 import numpy as np
 import scipy.sparse as sp
-from tqdm import tqdm
 import torch
 
 
@@ -47,17 +46,19 @@ def get_adjacency_matrices(data):
     :return:
         A: list of relation type specific adjacency matrices
     """
-    print("Converting torch_geometric.datasets.entities data to relation type specific adjacency matrices")
     num_rels = data.num_rels
     num_nodes = data.num_nodes
 
-    A = [np.zeros((num_nodes, num_nodes)) for _ in range(num_rels)]
+    A = []
+    source_nodes = data.edge_index[0].numpy()
+    target_nodes = data.edge_index[1].numpy()
 
-    edges = list(zip(data.edge_index[0].numpy(), data.edge_index[1].numpy()))
-    for rel, (src, dst) in zip(data.edge_type, edges):
-        A[rel][src][dst] = 1
-
-    for i, m in tqdm(enumerate(A)):
-        A[i] = sp.csr_matrix(m)
+    # Get edges for given (relation) edge type and construct adjacency matrix
+    for i in range(num_rels):
+        indices = np.argwhere(np.asarray(data.edge_type) == i).squeeze(axis=1)
+        r_source_nodes = source_nodes[indices]
+        r_target_nodes = target_nodes[indices]
+        a = sp.csr_matrix((np.ones(len(indices)), (r_source_nodes, r_target_nodes)), shape=(num_nodes, num_nodes))
+        A.append(a)
 
     return A
