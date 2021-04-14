@@ -54,13 +54,16 @@ class RGCN(torch.nn.Module):
         self.layers.append(h2o)
 
     def build_input_layer(self):
-        return RGCNConv(self.num_nodes, self.h_dim, self.num_rels, self.num_bases, activation=F.relu)
+        return RGCNConv(self.num_nodes, self.h_dim, self.num_rels, self.num_bases, activation=F.relu,
+                        dropout=self.dropout)
 
     def build_hidden_layer(self):
-        return RGCNConv(self.h_dim, self.h_dim, self.num_rels, self.num_bases, activation=F.relu)
+        return RGCNConv(self.h_dim, self.h_dim, self.num_rels, self.num_bases, activation=F.relu,
+                        dropout=self.dropout)
 
     def build_output_layer(self):
-        return RGCNConv(self.h_dim, self.out_dim, self.num_rels, self.num_bases, activation=partial(F.softmax, dim=1))
+        return RGCNConv(self.h_dim, self.out_dim, self.num_rels, self.num_bases, activation=partial(F.softmax, dim=-1),
+                        dropout=self.dropout, is_output_layer=True)
 
     def reset_parameters(self):
         for layer in self.layers:
