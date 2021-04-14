@@ -167,7 +167,7 @@ if __name__ == "__main__":
     parser.add_argument('--num_hidden_layers', type=int, default=0, help='Number of hidden layers')
     parser.add_argument('--dropout', type=float, default=0., help='Dropout rate')
     parser.add_argument('--lr', type=int, default=0.01, help='Learning rate')
-    parser.add_argument('--lr', type=int, default=0., help='Weight decay')
+    parser.add_argument('--l2', type=int, default=0., help='Weight decay')
     parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
     arguments = parser.parse_args()
 
@@ -178,6 +178,7 @@ if __name__ == "__main__":
         'num_hidden_layers': arguments.num_hidden_layers,
         'dropout': arguments.dropout,
         'lr': arguments.lr,
+        'l2': arguments.l2,
         'epochs': arguments.epochs,
     }
     print(f"Model config:\n{args_dict}")
