@@ -1,6 +1,7 @@
 import numpy as np
 import scipy.sparse as sp
 from tqdm import tqdm
+import torch
 
 
 # https://github.com/mjDelta/relation-gcn-pytorch/blob/master/utils.py
@@ -10,6 +11,18 @@ def normalize(matrix):
     D_inv = sp.diags(row_sum_inv)
     out = D_inv.dot(matrix).tocsr()
     return out
+
+
+# https://github.com/mjDelta/relation-gcn-pytorch/blob/master/train.py
+def to_sparse_tensor(sparse_array):
+    if len(sp.find(sparse_array)[-1]) > 0:
+        v = torch.FloatTensor(sp.find(sparse_array)[-1])
+        i = torch.LongTensor(sparse_array.nonzero())
+        shape = sparse_array.shape
+        sparse_tensor = torch.sparse_coo_tensor(i, v, torch.Size(shape))
+    else:
+        sparse_tensor = torch.empty([sparse_array.shape[0], sparse_array.shape[1]], layout=torch.sparse_coo)
+    return sparse_tensor
 
 
 def get_adjacency_matrices(data):

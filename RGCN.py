@@ -6,21 +6,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pickle
-import scipy.sparse as sp
+import numpy as np
 from RGCNConv import RGCNConv
 import utils
-
-
-# https://github.com/mjDelta/relation-gcn-pytorch/blob/master/train.py
-def to_sparse_tensor(sparse_array):
-    if len(sp.find(sparse_array)[-1]) > 0:
-        v = torch.FloatTensor(sp.find(sparse_array)[-1])
-        i = torch.LongTensor(sparse_array.nonzero())
-        shape = sparse_array.shape
-        sparse_tensor = torch.sparse_coo_tensor(i, v, torch.Size(shape))
-    else:
-        sparse_tensor = torch.sparse_coo_tensor(sparse_array.shape[0], sparse_array.shape[1])
-    return sparse_tensor
 
 
 # Somewhat inspired by: https://docs.dgl.ai/en/0.4.x/tutorials/models/1_gnn/4_rgcn.html
@@ -132,9 +120,9 @@ def main(args):
     num_classes = y.shape[1]
     num_rels = len(A)
 
-    y = y.argmax(axis=-1)
-    train_y = y[train_idx]
-    test_y = y[test_idx]
+    y = np.squeeze(np.asarray(y.argmax(axis=-1))).astype('int64')
+    train_y = torch.tensor(y[train_idx])
+    test_y = torch.tensor(y[test_idx])
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = RGCN(
@@ -152,9 +140,11 @@ def main(args):
     adj_t = []
     for a in A:
         nor_a = utils.normalize(a)
-        if len(nor_a.nonzero()[0]) > 0:
-            tensor_a = to_sparse_tensor(nor_a)
-            adj_t.append(tensor_a.to(device))
+        # if len(nor_a.nonzero()[0]) > 0:
+        #     tensor_a = to_sparse_tensor(nor_a)
+        #     adj_t.append(tensor_a.to(device))
+        tensor_a = utils.to_sparse_tensor(nor_a)
+        adj_t.append(tensor_a.to(device))
     x = None
 
     for epoch in range(1, args["epochs"] + 1):
