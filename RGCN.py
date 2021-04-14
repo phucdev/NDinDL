@@ -7,16 +7,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.datasets import Entities
 from torch_geometric.utils.num_nodes import maybe_num_nodes
-import scipy.sparse as sp
 from RGCNConv import RGCNConv
 import utils
-
 
 
 # Somewhat inspired by: https://docs.dgl.ai/en/0.4.x/tutorials/models/1_gnn/4_rgcn.html
 class RGCN(torch.nn.Module):
     def __init__(self, num_nodes, h_dim, out_dim, num_rels,
-                 num_bases=-1, num_hidden_layers=1, dropout=0.5):
+                 num_bases=-1, num_hidden_layers=1, dropout=0.5, bias=False):
         """
         Implementation of R-GCN from the `"Modeling
         Relational Data with Graph Convolutional Networks"
@@ -29,6 +27,7 @@ class RGCN(torch.nn.Module):
         :param num_bases: Number of basis functions
         :param num_hidden_layers: Number of hidden layers
         :param dropout: Dropout probability
+        :param bias: Whether to use an additive bias
         """
         super(RGCN, self).__init__()
         self.num_nodes = num_nodes
@@ -38,6 +37,7 @@ class RGCN(torch.nn.Module):
         self.num_bases = num_bases
         self.num_hidden_layers = num_hidden_layers
         self.dropout = dropout
+        self.bias = bias
 
         self.layers = nn.ModuleList()
         # create rgcn layers
@@ -57,15 +57,15 @@ class RGCN(torch.nn.Module):
 
     def build_input_layer(self):
         return RGCNConv(self.num_nodes, self.h_dim, self.num_rels, self.num_bases, activation=F.relu,
-                        dropout=self.dropout)
+                        dropout=self.dropout, bias=self.bias)
 
     def build_hidden_layer(self):
         return RGCNConv(self.h_dim, self.h_dim, self.num_rels, self.num_bases, activation=F.relu,
-                        dropout=self.dropout)
+                        dropout=self.dropout, bias=self.bias)
 
     def build_output_layer(self):
         return RGCNConv(self.h_dim, self.out_dim, self.num_rels, self.num_bases, activation=partial(F.softmax, dim=-1),
-                        dropout=self.dropout, is_output_layer=True)
+                        dropout=self.dropout, is_output_layer=True, bias=self.bias)
 
     def reset_parameters(self):
         for layer in self.layers:
@@ -113,6 +113,9 @@ def test(model, x, adj_t, train_idx, train_y, test_idx, test_y):
 
 
 def main(args):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Load data via pytorch geometric
     path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'Entities')
     dataset = Entities(path, args["dataset"])
     data = dataset[0]
@@ -120,7 +123,18 @@ def main(args):
     data.num_nodes = maybe_num_nodes(data.edge_index)
     data.num_rels = dataset.num_relations
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # Construct relation type specific adjacency matrices from data.edge_index and data.edge_type in utils
+    A = utils.get_adjacency_matrices(data)
+    adj_t = []
+    # Normalize matrices individually and convert to sparse tensors
+    for a in A:
+        nor_a = utils.normalize(a)
+        if len(nor_a.nonzero()[0]) > 0:
+            tensor_a = utils.to_sparse_tensor(nor_a)
+            adj_t.append(tensor_a.to(device))
+    x = None    # Replace if features are available
+
+    # Initialize RGCN model
     model = RGCN(
         num_nodes=data.num_nodes,
         h_dim=args["h_dim"],
@@ -133,16 +147,7 @@ def main(args):
     optimizer = torch.optim.Adam(model.parameters(), lr=args["lr"], weight_decay=args["l2"])
     loss_fn = nn.CrossEntropyLoss()
 
-    # Construct relation type specific adjacency matrices from data.edge_index and data.edge_type in utils
-    A = utils.get_adjacency_matrices(data)
-    adj_t = []
-    for a in A:
-        nor_a = utils.normalize(a)
-        if len(nor_a.nonzero()[0]) > 0:
-            tensor_a = utils.to_sparse_tensor(nor_a)
-            adj_t.append(tensor_a.to(device))
-    x = None
-
+    # Train and evaluate model
     for epoch in range(1, args["epochs"] + 1):
         loss = train(model, x, adj_t, optimizer, loss_fn, data.train_idx, data.train_y)
         train_acc, test_acc = test(model, x, adj_t, data.train_idx, data.train_y, data.test_idx, data.test_y)
@@ -160,6 +165,7 @@ if __name__ == "__main__":
     parser.add_argument('--dropout', type=float, default=0., help='Dropout rate')
     parser.add_argument('--lr', type=int, default=0.01, help='Learning rate')
     parser.add_argument('--l2', type=int, default=0., help='Weight decay')
+    parser.add_argument('--bias', type=bool, default=False, help='Bias (True, False)')
     parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
     arguments = parser.parse_args()
 
@@ -171,6 +177,7 @@ if __name__ == "__main__":
         'dropout': arguments.dropout,
         'lr': arguments.lr,
         'l2': arguments.l2,
+        'bias': arguments.bias,
         'epochs': arguments.epochs,
     }
     print(f"Model config:\n{args_dict}")
