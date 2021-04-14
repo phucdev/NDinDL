@@ -105,9 +105,9 @@ class RGCNConv(nn.Module):
 
         out = torch.spmm(supports, weight)  # (num_nodes, num_rels)
 
-        # If featureless add dropout to output, by elementwise multiplying with column vector of ones,
+        # If x is None add dropout to output, by elementwise multiplying with column vector of ones,
         # with dropout applied to the vector of ones.
-        if x is not None:
+        if x is None:
             temp = torch.ones(num_nodes).to(out.device)
             temp_drop = F.dropout(temp, self.dropout)
             out = (out.transpose(1, 0) * temp_drop).transpose(1, 0)

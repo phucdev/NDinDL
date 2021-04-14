@@ -12,17 +12,6 @@ from RGCNConv import RGCNConv
 import utils
 
 
-# https://github.com/mjDelta/relation-gcn-pytorch/blob/master/train.py
-def to_sparse_tensor(sparse_array):
-    if len(sp.find(sparse_array)[-1]) > 0:
-        v = torch.FloatTensor(sp.find(sparse_array)[-1])
-        i = torch.LongTensor(sparse_array.nonzero())
-        shape = sparse_array.shape
-        sparse_tensor = torch.sparse_coo_tensor(i, v, torch.Size(shape))
-    else:
-        sparse_tensor = torch.sparse_coo_tensor(sparse_array.shape[0], sparse_array.shape[1])
-    return sparse_tensor
-
 
 # Somewhat inspired by: https://docs.dgl.ai/en/0.4.x/tutorials/models/1_gnn/4_rgcn.html
 class RGCN(torch.nn.Module):
@@ -67,13 +56,16 @@ class RGCN(torch.nn.Module):
         self.layers.append(h2o)
 
     def build_input_layer(self):
-        return RGCNConv(self.num_nodes, self.h_dim, self.num_rels, self.num_bases, activation=F.relu)
+        return RGCNConv(self.num_nodes, self.h_dim, self.num_rels, self.num_bases, activation=F.relu,
+                        dropout=self.dropout)
 
     def build_hidden_layer(self):
-        return RGCNConv(self.h_dim, self.h_dim, self.num_rels, self.num_bases, activation=F.relu)
+        return RGCNConv(self.h_dim, self.h_dim, self.num_rels, self.num_bases, activation=F.relu,
+                        dropout=self.dropout)
 
     def build_output_layer(self):
-        return RGCNConv(self.h_dim, self.out_dim, self.num_rels, self.num_bases, activation=partial(F.softmax, dim=1))
+        return RGCNConv(self.h_dim, self.out_dim, self.num_rels, self.num_bases, activation=partial(F.softmax, dim=-1),
+                        dropout=self.dropout, is_output_layer=True)
 
     def reset_parameters(self):
         for layer in self.layers:
@@ -147,7 +139,7 @@ def main(args):
     for a in A:
         nor_a = utils.normalize(a)
         if len(nor_a.nonzero()[0]) > 0:
-            tensor_a = to_sparse_tensor(nor_a)
+            tensor_a = utils.to_sparse_tensor(nor_a)
             adj_t.append(tensor_a.to(device))
     x = None
 
