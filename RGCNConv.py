@@ -82,14 +82,17 @@ class RGCNConv(nn.Module):
             nn.init.xavier_uniform_(self.b, gain=nn.init.calculate_gain('relu'))
 
     def forward(self, x, adj_t):
-        supports = []
+        supports = []   # supports holds hidden states of the nodes
         num_nodes = adj_t[0].shape[0]
         for i, adj in enumerate(adj_t):
+            # Matrix multiplication of relation type specific adjacency matrices
+            # with x, the node embeddings or hidden states of the nodes from the previous layer
             if x is not None:
                 supports.append(torch.spmm(adj, x))
             else:
                 supports.append(adj)
-        supports = torch.cat(supports, dim=1)   # (num_rel, num_nodes*num_rel)
+        # list of (num_nodes, num_nodes) tensors -> (num_nodes, num_nodes*num_rel)
+        supports = torch.cat(supports, dim=1)
 
         # Calculate relation specific weight matrices
         if self.num_bases < self.num_rels:
